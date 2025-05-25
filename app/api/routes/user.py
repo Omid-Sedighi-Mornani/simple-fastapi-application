@@ -1,4 +1,4 @@
-from fastapi import APIRouter, status, HTTPException, Query
+from fastapi import APIRouter, status, HTTPException, Query, BackgroundTasks
 from typing import Annotated
 from models.user import User
 from schemas.user import UserCreate
@@ -9,6 +9,7 @@ import os
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
+from utils.email import send_email, render_email_template
 
 router = APIRouter()
 
@@ -21,7 +22,11 @@ def test_response():
 
 
 @router.post("/signin")
-async def signup(user_create: UserCreate, session: AsyncSessionMaker):
+async def signup(
+    user_create: UserCreate,
+    session: AsyncSessionMaker,
+    background_tasks: BackgroundTasks,
+):
 
     user_dict = user_create.model_dump(exclude={"password"})
     hashed_password = hash_password(user_create.password)
@@ -37,25 +42,40 @@ async def signup(user_create: UserCreate, session: AsyncSessionMaker):
             detail="Email already exists in database!",
         )
 
-    to_encode = {"sub": user_create.email}
-    token = create_access_token(to_encode)
+    token = create_access_token({"sub": user_create.email})
 
     verification_link = f"{SERVER_URI}/users/verify?token={token}"
-    print(verification_link)
+
+    html_content = await render_email_template(
+        "verification.html",
+        {"username": user.username, "verification_link": verification_link},
+    )
+
+    background_tasks.add_task(
+        send_email, user.email, f"Hi {user.username}!", html_content
+    )
 
     return {"message": "The verification mail has been sent. Please check your email"}
 
 
 @router.get("/verify")
 async def verify_user(token: Annotated[str, Query(...)], session: AsyncSessionMaker):
+
+    invalid_token_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid token credentials!",
+        headers={"wWW-Authenticate": "Bearer"},
+    )
+
     try:
         user_data = decode_access_token(token)
     except InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="No valid token provided!"
-        )
-
+        raise invalid_token_exception
     email = user_data.get("sub")
+
+    if not email:
+        raise invalid_token_exception
+
     statement = select(User).where(User.email == email)
     result = await session.exec(statement)
 
