@@ -4,7 +4,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from deps.db import init_db
+from database.core import init_db
 from models.user import User
 from models.item import Item
 

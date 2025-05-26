@@ -1,24 +1,64 @@
 from fastapi import APIRouter, status, HTTPException, Query, BackgroundTasks
 from typing import Annotated
 from models.user import User
-from schemas.user import UserCreate
-from utils.hashing import hash_password
-from deps.db import AsyncSessionMaker
+from schemas.user import UserCreate, UserUpdate
+from database.core import AsyncSessionMaker
 from utils.tokens import create_access_token, decode_access_token
 import os
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
-from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
+from jwt.exceptions import InvalidTokenError
 from utils.email import send_email, render_email_template
+from services.user import (
+    read_user,
+    read_user_by_email,
+    create_user,
+    update_user,
+    delete_user,
+)
+from database.core import NotFoundError, AlreadyExistsError
 
 router = APIRouter()
 
 SERVER_URI = os.getenv("SERVER_URI")
 
 
-@router.get("/")
-def test_response():
-    return {"message": "response received!"}
+@router.get("/id/{user_id}")
+async def get(user_id: int, session: AsyncSessionMaker):
+
+    try:
+        user = await read_user(user_id, session)
+    except NotFoundError:
+        raise HTTPException(
+            detail="User not found!", status_code=status.HTTP_404_NOT_FOUND
+        )
+
+    return user
+
+
+@router.put("/id/{user_id}")
+async def update(user_id: int, user_update: UserUpdate, session: AsyncSessionMaker):
+    try:
+        user = await update_user(user_id, user_update, session)
+    except NotFoundError:
+        raise HTTPException(
+            detail="User to be updated, was not found!",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    return user
+
+
+@router.delete("/id/{user_id}")
+async def delete(user_id: int, session: AsyncSessionMaker):
+    try:
+        user = await delete_user(user_id, session)
+    except NotFoundError:
+        raise HTTPException(
+            detail="User to be deleted, was not found!",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    return user
 
 
 @router.post("/signin")
@@ -28,18 +68,12 @@ async def signup(
     background_tasks: BackgroundTasks,
 ):
 
-    user_dict = user_create.model_dump(exclude={"password"})
-    hashed_password = hash_password(user_create.password)
-    user = User(**user_dict, hashed_password=hashed_password)
-
     try:
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
-    except IntegrityError:
+        user = await create_user(user_create, session)
+    except AlreadyExistsError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already exists in database!",
+            detail="User with email already exists in database!",
         )
 
     token = create_access_token({"sub": user_create.email})
@@ -76,14 +110,11 @@ async def verify_user(token: Annotated[str, Query(...)], session: AsyncSessionMa
     if not email:
         raise invalid_token_exception
 
-    statement = select(User).where(User.email == email)
-    result = await session.exec(statement)
-
-    user = result.one_or_none()
-
-    if not user:
+    try:
+        user = await read_user_by_email(email, session)
+    except NotFoundError:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            detail="User not found!", status_code=status.HTTP_404_NOT_FOUND
         )
 
     user.verified = True

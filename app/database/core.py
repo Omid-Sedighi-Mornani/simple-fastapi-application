@@ -26,3 +26,11 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 AsyncSessionMaker = Annotated[AsyncSession, Depends(get_async_session)]
+
+
+class NotFoundError(Exception):
+    pass
+
+
+class AlreadyExistsError(Exception):
+    pass

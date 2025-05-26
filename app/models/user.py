@@ -1,6 +1,8 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import List, Optional
 from schemas.user import UserBase
+from pydantic import field_serializer
+from pydantic_core import PydanticUndefined
 
 
 class User(UserBase, table=True):
@@ -10,3 +12,7 @@ class User(UserBase, table=True):
     verified: bool = Field(default=False)
 
     items: List["Item"] = Relationship(back_populates="user")
+
+    @field_serializer("hashed_password", return_type=str)
+    def hide_password(self, hashed_password: str, _info) -> dict:
+        return "***"
