@@ -34,3 +34,7 @@ class NotFoundError(Exception):
 
 class AlreadyExistsError(Exception):
     pass
+
+
+class NotAuthenticatedError(Exception):
+    pass
